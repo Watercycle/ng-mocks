@@ -1,6 +1,7 @@
 import { Input } from '@angular/core';
 
 import { AnyType, DirectiveIo } from './core.types';
+import { createSignalInputProperty } from './func.create-signal-input-property';
 import funcDirectiveIoBuild from './func.directive-io-build';
 import funcDirectiveIoParse from './func.directive-io-parse';
 
@@ -13,10 +14,25 @@ export default (cls: AnyType<any>, inputs?: Array<DirectiveIo>, exclude?: string
   // istanbul ignore else
   if (inputs) {
     for (const input of inputs) {
-      const { name, alias, required } = funcDirectiveIoParse(input);
+      const { name, alias, required, isSignal, transform } = funcDirectiveIoParse(input);
       if (exclude && exclude.indexOf(name) !== -1) {
         continue;
       }
+
+      if (isSignal) {
+        const applied = createSignalInputProperty(
+          cls, 
+          name, 
+          { alias, required, transform },
+          () => Input(funcDirectiveIoBuild({ name, alias, required }, true) as never)(cls.prototype, name)
+        );
+        
+        if (applied) {
+          continue;
+        }
+      }
+      
+      // Apply traditional @Input decorator
       Input(funcDirectiveIoBuild({ name, alias, required }, true) as never)(cls.prototype, name);
     }
   }

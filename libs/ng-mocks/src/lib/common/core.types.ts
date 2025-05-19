@@ -40,11 +40,17 @@ export type AnyDeclaration<T> = AnyType<T> | InjectionToken<T> | string;
 
 /**
  * Normalized Input / Output type.
- * It should be A16 structure.
+ * It supports both traditional and signal-based inputs (Angular 19+).
  *
  * @internal
  */
-export type DirectiveIoParsed = { name: string; alias?: string; required?: boolean };
+export type DirectiveIoParsed = { 
+  name: string; 
+  alias?: string; 
+  required?: boolean;
+  isSignal?: boolean;
+  transform?: Function;
+};
 
 /**
  * Possible Input / Output type.

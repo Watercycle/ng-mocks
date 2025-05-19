@@ -4,6 +4,9 @@ import coreDefineProperty from '../common/core.define-property';
 import { AnyDeclaration, DirectiveIo } from '../common/core.types';
 import funcDirectiveIoBuild from '../common/func.directive-io-build';
 import funcDirectiveIoParse from '../common/func.directive-io-parse';
+import { extractSignalInputMetadata } from '../common/func.extract-signal-input-metadata';
+import { isSignalInput } from '../common/func.is-signal-input';
+import { getSignalTransform } from '../common/func.get-signal-transform';
 
 interface Declaration {
   host: Record<string, string | undefined>;
@@ -142,32 +145,41 @@ const parsePropMetadataParserFactoryProp =
       alias?: string;
       required?: boolean;
       bindingPropertyName?: string;
+      ngMetadataName?: string;
+      __isSignal?: boolean;
+      __transform?: Function;
+      isSignal?: boolean;
+      transform?: Function;
     },
     declaration: Declaration,
   ): void => {
-    const { alias, required } = funcDirectiveIoParse({
-      name,
-      alias: decorator.alias ?? decorator.bindingPropertyName,
-      required: decorator.required,
-    });
+    // Extract signal metadata from decorator
+    const metadata = extractSignalInputMetadata(decorator, name);
+    const normalizedDef = funcDirectiveIoBuild(metadata);
 
-    const normalizedDef = funcDirectiveIoBuild({ name, alias, required });
-
-    let add = true;
+    // Check if this input/output is already defined
+    let isDuplicate = false;
     for (const def of declaration[key]) {
       if (def === normalizedDef) {
-        add = false;
+        isDuplicate = true;
         break;
       }
 
-      const { name: defName, alias: defAlias, required: defRequired } = funcDirectiveIoParse(def);
-      if (defName === name && defAlias === alias && defRequired === required) {
-        add = false;
+      const parsed = funcDirectiveIoParse(def);
+      
+      if (
+        parsed.name === metadata.name && 
+        parsed.alias === metadata.alias && 
+        parsed.required === metadata.required &&
+        parsed.isSignal === metadata.isSignal
+      ) {
+        isDuplicate = true;
         break;
       }
     }
 
-    if (add) {
+    // Add to declarations if not a duplicate
+    if (!isDuplicate) {
       declaration[key].unshift(normalizedDef);
     }
   };
@@ -323,16 +335,28 @@ const parsePropDecoratorsParserFactoryProp = (key: 'inputs' | 'outputs') => {
     name: string,
     decorator: {
       args?: [DirectiveIo];
+      __isSignal?: boolean;
+      __transform?: Function;
     },
     declaration: Declaration,
   ): void => {
+    // Extract basic properties from args
     const { alias = undefined, required = undefined } =
       typeof decorator.args?.[0] === 'undefined'
         ? {}
         : typeof decorator.args[0] === 'string'
           ? { alias: decorator.args[0] }
           : decorator.args[0];
-    callback(_, name, { alias, required, bindingPropertyName: alias }, declaration);
+    
+    const metadata = extractSignalInputMetadata({
+      alias,
+      required,
+      bindingPropertyName: alias,
+      __isSignal: decorator.__isSignal,
+      __transform: decorator.__transform
+    }, name);
+    
+    callback(_, name, metadata, declaration);
   };
 };
 const parsePropDecoratorsParserInput = parsePropDecoratorsParserFactoryProp('inputs');

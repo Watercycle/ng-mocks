@@ -11,5 +11,14 @@ export default function (param: DirectiveIo): DirectiveIoParsed {
     return { name, alias };
   }
 
-  return param;
+  // Normalize object parameters to DirectiveIoParsed
+  const result: DirectiveIoParsed = { 
+    name: param.name,
+    ...(param.alias !== undefined ? { alias: param.alias } : {}),
+    ...(param.required !== undefined ? { required: param.required } : {}),
+    ...(param.isSignal !== undefined ? { isSignal: param.isSignal } : {}),
+    ...(param.transform !== undefined ? { transform: param.transform } : {})
+  };
+
+  return result;
 }

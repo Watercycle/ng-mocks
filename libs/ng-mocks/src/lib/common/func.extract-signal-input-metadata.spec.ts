@@ -1,42 +1,38 @@
 import { extractSignalInputMetadata } from './func.extract-signal-input-metadata';
+import * as directiveIoParseModule from './func.directive-io-parse';
+import * as isSignalInputModule from './func.is-signal-input';
+import * as getSignalTransformModule from './func.get-signal-transform';
 
-// Mock dependencies
-jest.mock('./func.directive-io-parse', () => {
-  return {
-    __esModule: true,
-    default: jest.fn().mockImplementation((param) => {
+describe('extractSignalInputMetadata', () => {
+  let directiveIoParseSpy: jasmine.Spy;
+  let isSignalInputSpy: jasmine.Spy;
+  let getSignalTransformSpy: jasmine.Spy;
+  
+  beforeEach(() => {
+    directiveIoParseSpy = spyOn(directiveIoParseModule, 'default').and.callFake(param => {
       return { 
         name: param.name,
         alias: param.alias,
         required: param.required
       };
-    })
-  };
-});
-
-jest.mock('./func.is-signal-input', () => {
-  return {
-    isSignalInput: jest.fn().mockImplementation(meta => {
+    });
+    
+    isSignalInputSpy = spyOn(isSignalInputModule, 'isSignalInput').and.callFake(meta => {
       return meta && (meta.__isSignal || meta.isSignal);
-    })
-  };
-});
-
-jest.mock('./func.get-signal-transform', () => {
-  return {
-    getSignalTransform: jest.fn().mockImplementation(meta => {
+    });
+    
+    getSignalTransformSpy = spyOn(getSignalTransformModule, 'getSignalTransform').and.callFake(meta => {
       return meta && (meta.__transform || meta.transform);
-    })
-  };
-});
-
-describe('extractSignalInputMetadata', () => {
+    });
+  });
+  
   it('should extract metadata from input decorator', () => {
+    const transformFn = () => 'transformed';
     const input = {
       alias: 'aliasName',
       required: true,
       __isSignal: true,
-      __transform: () => 'transformed'
+      __transform: transformFn
     };
     
     const result = extractSignalInputMetadata(input, 'propName');
@@ -46,7 +42,7 @@ describe('extractSignalInputMetadata', () => {
       alias: 'aliasName',
       required: true,
       isSignal: true,
-      transform: input.__transform
+      transform: transformFn
     });
   });
 

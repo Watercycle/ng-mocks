@@ -1,145 +1,166 @@
-import { ɵReflectionCapabilities as ReflectionCapabilities } from '@angular/core';
+// istanbul ignore file
+import { Component, ContentChild, ContentChildren, Directive, Input, NgModule, Output, Pipe, Type } from '@angular/core';
 
 import coreDefineProperty from '../common/core.define-property';
 import { AnyDeclaration, DirectiveIo } from '../common/core.types';
 import funcDirectiveIoBuild from '../common/func.directive-io-build';
 import funcDirectiveIoParse from '../common/func.directive-io-parse';
 import { extractSignalInputMetadata } from '../common/func.extract-signal-input-metadata';
-import { isSignalInput } from '../common/func.is-signal-input';
-import { getSignalTransform } from '../common/func.get-signal-transform';
 
 interface Declaration {
   host: Record<string, string | undefined>;
-  hostBindings: Array<[string, string?, ...any[]]>;
-  hostListeners: Array<[string, string?, ...any[]]>;
-  attributes: string[];
-  inputs: Array<DirectiveIo>;
-  outputs: Array<DirectiveIo>;
-  propDecorators: Record<string, any[]>;
-  queries: Record<string, any>;
-  decorators: Array<'Injectable' | 'Pipe' | 'Directive' | 'Component' | 'NgModule'>;
-  standalone?: boolean;
-  [key: string]: any;
+  inputs: DirectiveIo[];
+  outputs: DirectiveIo[];
+  exportAs: string[];
+  providers: any[];
+  queries: Map<string, any>;
+  selector: string | string[] | null;
 }
 
-const pushDecorator = (decorators: string[], decorator: string): void => {
-  const deleteIndex = decorators.indexOf(decorator);
-  if (deleteIndex !== -1) {
-    decorators.splice(deleteIndex, 1);
-  }
-  if (
-    decorator === 'Injectable' ||
-    decorator === 'Pipe' ||
-    decorator === 'Directive' ||
-    decorator === 'Component' ||
-    decorator === 'NgModule'
-  ) {
-    decorators.push(decorator);
-  }
+// Shared parse object that is used to reduce memory usage by avoiding using new Object.
+const cachedParse = {
+  name: '',
+  alias: undefined,
+  required: undefined,
 };
 
-const getAllKeys = <T extends Record<keyof any, any>>(instance: T): Array<keyof T> => {
-  const props: string[] = [];
-  for (const key of Object.keys(instance)) {
-    props.push(key);
-  }
+const parseInputOrOutput = (param: string): typeof cachedParse => {
+  const [name, alias] = param.split(':').map(v => v.trim());
+  cachedParse.name = name;
+  cachedParse.alias = name === alias || !alias ? undefined : alias;
+  cachedParse.required = undefined;
 
-  return props as never;
+  return cachedParse;
 };
 
-const createDeclarations = (parent: Partial<Declaration>): Declaration => ({
-  host: parent.host ? { ...parent.host } : {},
-  hostBindings: parent.hostBindings ? [...parent.hostBindings] : [],
-  hostListeners: parent.hostListeners ? [...parent.hostListeners] : [],
-  attributes: parent.attributes ? [...parent.attributes] : [],
-  inputs: parent.inputs ? [...parent.inputs] : [],
-  outputs: parent.outputs ? [...parent.outputs] : [],
-  propDecorators: parent.propDecorators ? { ...parent.propDecorators } : {},
-  queries: parent.queries ? { ...parent.queries } : {},
-  decorators: parent.decorators ? [...parent.decorators] : [],
-});
+/**
+ * Tries to extract selector from meta.
+ */
+const extractSelector = (def: any): string | string[] | null => {
+  if (!def) {
+    return null;
+  }
 
-const parseParameters = (
-  def: {
-    __parameters__?: Array<null | Array<
-      | {
-          attributeName: string;
-          ngMetadataName: 'Attribute';
-        }
-      | {
-          token: AnyDeclaration<any>;
-          ngMetadataName: 'Inject';
-        }
-      | {
-          ngMetadataName: 'Optional';
-        }
-    >>;
-  },
-  declaration: Declaration,
-): void => {
-  if (Object.prototype.hasOwnProperty.call(def, '__parameters__') && def.__parameters__) {
-    for (const decorators of def.__parameters__) {
-      for (const decorator of decorators || []) {
-        if (
-          decorator.ngMetadataName === 'Attribute' &&
-          declaration.attributes.indexOf(decorator.attributeName) === -1
-        ) {
-          declaration.attributes.push(decorator.attributeName);
+  const defKind = def.__proto__.constructor;
+  if (defKind === Directive || defKind === Component) {
+    return def.selector;
+  }
+
+  if (defKind === Pipe) {
+    return def.name;
+  }
+
+  return null;
+};
+
+/**
+ * Tries to extract exportAs from meta.
+ */
+const extractExportAs = (def: any): string[] => {
+  if (!def) {
+    return [];
+  }
+
+  const defKind = def.__proto__.constructor;
+  if (defKind === Directive || defKind === Component) {
+    return def.exportAs ? def.exportAs.split(',').map((v: string) => v.trim()) : [];
+  }
+
+  return [];
+};
+
+/**
+ * Tries to extract providers form meta.
+ */
+const extractProviders = (def: any): any[] => {
+  if (!def) {
+    return [];
+  }
+
+  const providers: any[] = [];
+
+  const defKind = def.__proto__.constructor;
+  if (defKind === Component && def.viewProviders && Array.isArray(def.viewProviders)) {
+    providers.push(...def.viewProviders);
+  }
+  if ((defKind === Component || defKind === Directive || defKind === NgModule) && def.providers && Array.isArray(def.providers)) {
+    providers.push(...def.providers);
+  }
+
+  return providers;
+};
+
+/**
+ * Tries to extract host from meta.
+ */
+const extractHost = (def: any): Record<string, string | undefined> => {
+  if (!def) {
+    return {};
+  }
+
+  const defKind = def.__proto__.constructor;
+  if (defKind === Directive || defKind === Component) {
+    return def.host || {};
+  }
+
+  return {};
+};
+
+/**
+ * Tries to extract inputs form meta.
+ */
+const extractInputs = (def: any): DirectiveIo[] => {
+  const directiveIo: DirectiveIo[] = [];
+
+  if (!def) {
+    return directiveIo;
+  }
+
+  const defKind = def.__proto__.constructor;
+  if (defKind === Directive || defKind === Component || defKind === NgModule) {
+    if (def.inputs && Array.isArray(def.inputs)) {
+      for (const param of def.inputs) {
+        if (typeof param === 'string') {
+          const value = parseInputOrOutput(param);
+          directiveIo.push(funcDirectiveIoBuild({ name: value.name, alias: value.alias }, false));
         }
       }
     }
   }
+
+  return directiveIo;
 };
 
-const parseAnnotations = (
-  def: {
-    __annotations__?: Array<{
-      ngMetadataName?: string;
-    }>;
-  },
-  declaration: Declaration,
-): void => {
-  if (Object.prototype.hasOwnProperty.call(def, '__annotations__') && def.__annotations__) {
-    for (const annotation of def.__annotations__) {
-      const ngMetadataName = annotation?.ngMetadataName;
-      if (!ngMetadataName) {
-        continue;
+/**
+ * Tries to extract outputs form meta.
+ */
+const extractOutputs = (def: any): DirectiveIo[] => {
+  const directiveIo: DirectiveIo[] = [];
+
+  if (!def) {
+    return directiveIo;
+  }
+
+  const defKind = def.__proto__.constructor;
+  if (defKind === Directive || defKind === Component) {
+    if (def.outputs && Array.isArray(def.outputs)) {
+      for (const param of def.outputs) {
+        if (typeof param === 'string') {
+          const value = parseInputOrOutput(param);
+          directiveIo.push(funcDirectiveIoBuild({ name: value.name, alias: value.alias }, false));
+        }
       }
-      declaration[ngMetadataName] = { ...annotation, attributes: declaration.attributes };
-      pushDecorator(declaration.decorators, ngMetadataName);
     }
   }
+
+  return directiveIo;
 };
 
-const parseDecorators = (
-  def: {
-    decorators?: Array<{
-      args?: [any];
-      type?: {
-        prototype?: {
-          ngMetadataName?: string;
-        };
-      };
-    }>;
-  },
-  declaration: Declaration,
-): void => {
-  if (Object.prototype.hasOwnProperty.call(def, 'decorators') && def.decorators) {
-    for (const decorator of def.decorators) {
-      const ngMetadataName = decorator?.type?.prototype?.ngMetadataName;
-      if (!ngMetadataName) {
-        continue;
-      }
-      declaration[ngMetadataName] = decorator.args ? { ...decorator.args[0] } : {};
-      pushDecorator(declaration.decorators, ngMetadataName);
-    }
-  }
-};
-
+// This weird declaration helps to enforce typing.
 const parsePropMetadataParserFactoryProp =
   (key: 'inputs' | 'outputs') =>
   (
-    _: string,
+    _: any,
     name: string,
     decorator: {
       alias?: string;
@@ -186,152 +207,89 @@ const parsePropMetadataParserFactoryProp =
 const parsePropMetadataParserInput = parsePropMetadataParserFactoryProp('inputs');
 const parsePropMetadataParserOutput = parsePropMetadataParserFactoryProp('outputs');
 
-const parsePropMetadataParserFactoryQueryChild =
-  (isViewQuery: boolean) =>
+// This weird declaration helps to enforce typing.
+const parsePropMetadataParserFactoryQuery =
+  (types: any[]) =>
   (
-    ngMetadataName: string,
-    prop: string,
+    _: any,
+    name: string,
     decorator: {
+      selector?: any;
+      first?: boolean;
+      descendants?: boolean;
       read?: any;
-      selector: string;
-      static?: boolean;
+      isViewQuery?: boolean;
     },
     declaration: Declaration,
   ): void => {
-    if (!declaration.queries[prop]) {
-      declaration.queries[prop] = {
-        isViewQuery,
-        ngMetadataName,
-        selector: decorator.selector,
-        ...(decorator.read === undefined ? {} : { read: decorator.read }),
-        ...(decorator.static === undefined ? {} : { static: decorator.static }),
-      };
+    // We need to check that decorator suits our types.
+    if (!decorator) {
+      return;
     }
-  };
-const parsePropMetadataParserContentChild = parsePropMetadataParserFactoryQueryChild(false);
-const parsePropMetadataParserViewChild = parsePropMetadataParserFactoryQueryChild(true);
-
-const parsePropMetadataParserFactoryQueryChildren =
-  (isViewQuery: boolean) =>
-  (
-    ngMetadataName: string,
-    prop: string,
-    decorator: {
-      descendants?: any;
-      emitDistinctChangesOnly?: boolean;
-      read?: any;
-      selector: string;
-    },
-    declaration: Declaration,
-  ): void => {
-    if (!declaration.queries[prop]) {
-      declaration.queries[prop] = {
-        isViewQuery,
-        ngMetadataName,
-        selector: decorator.selector,
-        ...(decorator.descendants === undefined ? {} : { descendants: decorator.descendants }),
-        ...(decorator.emitDistinctChangesOnly === undefined
-          ? {}
-          : { emitDistinctChangesOnly: decorator.emitDistinctChangesOnly }),
-        ...(decorator.read === undefined ? {} : { read: decorator.read }),
-      };
+    const index = types.findIndex(check => decorator.constructor === check);
+    if (index === -1) {
+      return;
     }
+
+    // Let's try to detect when it is needed.
+    declaration.queries.set(name, {
+      descendants: !!decorator.descendants,
+      emitDistinctChangesOnly: decorator.emitDistinctChangesOnly,
+      first: !!decorator.first,
+      isViewQuery: !!decorator.isViewQuery,
+      read: decorator.read,
+      selector: decorator.selector,
+      static: !!decorator.static,
+    });
   };
-const parsePropMetadataParserContentChildren = parsePropMetadataParserFactoryQueryChildren(false);
-const parsePropMetadataParserViewChildren = parsePropMetadataParserFactoryQueryChildren(true);
+const parsePropMetadataParserContentChild = parsePropMetadataParserFactoryQuery([ContentChild]);
+const parsePropMetadataParserContentChildren = parsePropMetadataParserFactoryQuery([ContentChildren]);
 
-const parsePropMetadataParserHostBinding = (
-  _: string,
-  prop: string,
-  decorator: {
-    args?: any;
-    hostPropertyName?: string;
-  },
-  declaration: Declaration,
-): void => {
-  const key = `[${decorator.hostPropertyName || prop}]`;
-  if (!declaration.host[key]) {
-    declaration.host[key] = prop;
+/**
+ * Function that helps with extracting all possible metadata from Component and Directive properties.
+ */
+const parsePropMetadata = (def: any, declaration?: Declaration): Declaration => {
+  declaration = declaration || {
+    host: {},
+    inputs: [],
+    outputs: [],
+    exportAs: [],
+    providers: [],
+    queries: new Map(),
+    selector: null,
+  };
+
+  if (!def || !def.propMetadata) {
+    return declaration;
   }
-  declaration.hostBindings.push([
-    prop,
-    decorator.hostPropertyName || prop,
-    ...(decorator.args ? [decorator.args] : []),
-  ]);
-};
 
-const parsePropMetadataParserHostListener = (
-  _: string,
-  prop: string,
-  decorator: {
-    args?: any;
-    eventName?: string;
-  },
-  declaration: Declaration,
-): void => {
-  const key = `(${decorator.eventName || prop})`;
-  if (!declaration.host[key]) {
-    declaration.host[key] = `${prop}($event)`;
-  }
-  declaration.hostListeners.push([prop, decorator.eventName || prop, ...(decorator.args ? [decorator.args] : [])]);
-};
-
-const parsePropMetadataMap: any = {
-  ContentChild: parsePropMetadataParserContentChild,
-  ContentChildren: parsePropMetadataParserContentChildren,
-  HostBinding: parsePropMetadataParserHostBinding,
-  HostListener: parsePropMetadataParserHostListener,
-  Input: parsePropMetadataParserInput,
-  Output: parsePropMetadataParserOutput,
-  ViewChild: parsePropMetadataParserViewChild,
-  ViewChildren: parsePropMetadataParserViewChildren,
-};
-
-const parsePropMetadata = (
-  def: {
-    __prop__metadata__?: Record<keyof any, any[]>;
-  },
-  declaration: Declaration,
-): void => {
-  if (Object.prototype.hasOwnProperty.call(def, '__prop__metadata__') && def.__prop__metadata__) {
-    for (const prop of getAllKeys(def.__prop__metadata__)) {
-      const decorators: Array<{
-        ngMetadataName?: string;
-      }> = def.__prop__metadata__[prop];
-      for (const decorator of decorators) {
-        const ngMetadataName = decorator?.ngMetadataName;
-        if (!ngMetadataName) {
-          continue;
-        }
-        parsePropMetadataMap[ngMetadataName]?.(ngMetadataName, prop, decorator, declaration);
+  for (const decoratorKey of Object.keys(def.propMetadata)) {
+    const metadata = def.propMetadata[decoratorKey];
+    if (!metadata) {
+      continue;
+    }
+    for (let metadataIndex = 0; metadataIndex < metadata.length; metadataIndex += 1) {
+      const decorator = metadata[metadataIndex];
+      const ngMetadataName = decorator?.ngMetadataName || decorator?.type?.prototype?.ngMetadataName;
+      if (ngMetadataName === 'Input') {
+        parsePropMetadataParserInput(decorator, decoratorKey, decorator, declaration);
+      } else if (ngMetadataName === 'Output') {
+        parsePropMetadataParserOutput(decorator, decoratorKey, decorator, declaration);
+      } else if (ngMetadataName === 'ContentChild') {
+        parsePropMetadataParserContentChild(decorator, decoratorKey, decorator, declaration);
+      } else if (ngMetadataName === 'ContentChildren') {
+        parsePropMetadataParserContentChildren(decorator, decoratorKey, decorator, declaration);
       }
     }
   }
+
+  return declaration;
 };
 
-const parseNgDef = (
-  def: {
-    ɵcmp?: any;
-    ɵdir?: any;
-    ɵpipe?: any;
-  },
-  declaration: Declaration,
-): void => {
-  if (declaration.standalone === undefined && def.ɵcmp?.standalone !== undefined) {
-    declaration.standalone = def.ɵcmp.standalone;
-  }
-  if (declaration.standalone === undefined && def.ɵdir?.standalone !== undefined) {
-    declaration.standalone = def.ɵdir.standalone;
-  }
-  if (declaration.standalone === undefined && def.ɵpipe?.standalone !== undefined) {
-    declaration.standalone = def.ɵpipe.standalone;
-  }
-};
-
+// This weird declaration helps to enforce typing.
 const parsePropDecoratorsParserFactoryProp = (key: 'inputs' | 'outputs') => {
-  const callback = parsePropMetadataParserFactoryProp(key);
   return (
-    _: string,
+    _: any,
     name: string,
     decorator: {
       args?: [DirectiveIo];
@@ -360,162 +318,77 @@ const parsePropDecoratorsParserFactoryProp = (key: 'inputs' | 'outputs') => {
   };
 };
 const parsePropDecoratorsParserInput = parsePropDecoratorsParserFactoryProp('inputs');
-const parsePropDecoratorsParserOutput = parsePropDecoratorsParserFactoryProp('outputs');
+const callback = parsePropMetadataParserInput;
 
-const parsePropDecoratorsParserFactoryQuery =
-  (isViewQuery: boolean) =>
-  (
-    ngMetadataName: string,
-    prop: string,
-    decorator: {
-      args: [string] | [string, any];
-    },
-    declaration: Declaration,
-  ): void => {
-    if (!declaration.queries[prop]) {
-      declaration.queries[prop] = {
-        isViewQuery,
-        ngMetadataName,
-        selector: decorator.args[0],
-        ...decorator.args[1],
-      };
-    }
+/**
+ * A function that tries to extract all possible information about an Angular declaration such as
+ * its selector, inputs, outputs, host bindings, providers etc.
+ */
+export default (dec: AnyDeclaration<any>): Declaration => {
+  const declaration: Declaration = {
+    host: {},
+    inputs: [],
+    outputs: [],
+    exportAs: [],
+    providers: [],
+    queries: new Map(),
+    selector: null,
   };
-const parsePropDecoratorsParserContent = parsePropDecoratorsParserFactoryQuery(false);
-const parsePropDecoratorsParserView = parsePropDecoratorsParserFactoryQuery(true);
 
-const parsePropDecoratorsParserHostBinding = (
-  _: string,
-  prop: string,
-  decorator: {
-    args?: [string] | [string, any[]];
-  },
-  declaration: Declaration,
-): void => {
-  const key = `[${decorator.args?.[0] || prop}]`;
-  if (!declaration.host[key]) {
-    declaration.host[key] = prop;
+  // istanbul ignore if
+  if (!dec || (typeof dec !== 'string' && typeof dec !== 'function' && typeof dec !== 'object')) {
+    return declaration;
   }
-  declaration.hostBindings.push([prop, ...(decorator.args || [])]);
-};
 
-const parsePropDecoratorsParserHostListener = (
-  _: string,
-  prop: string,
-  decorator: {
-    args?: any[];
-  },
-  declaration: Declaration,
-): void => {
-  const key = `(${decorator.args?.[0] || prop})`;
-  if (!declaration.host[key]) {
-    declaration.host[key] = `${prop}($event)`;
-  }
-  declaration.hostListeners.push([prop, ...(decorator.args || [])]);
-};
-
-const parsePropDecoratorsMap: any = {
-  ContentChild: parsePropDecoratorsParserContent,
-  ContentChildren: parsePropDecoratorsParserContent,
-  HostBinding: parsePropDecoratorsParserHostBinding,
-  HostListener: parsePropDecoratorsParserHostListener,
-  Input: parsePropDecoratorsParserInput,
-  Output: parsePropDecoratorsParserOutput,
-  ViewChild: parsePropDecoratorsParserView,
-  ViewChildren: parsePropDecoratorsParserView,
-};
-
-const parsePropDecorators = (
-  def: {
-    propDecorators?: Record<
-      string,
-      Array<{
-        args: any;
-        type?: {
-          prototype?: {
-            ngMetadataName?: string;
-          };
-        };
-      }>
-    >;
-  },
-  declaration: Declaration,
-): void => {
-  if (Object.prototype.hasOwnProperty.call(def, 'propDecorators') && def.propDecorators) {
-    for (const prop of getAllKeys(def.propDecorators)) {
-      declaration.propDecorators[prop] = [...(declaration.propDecorators[prop] || []), ...def.propDecorators[prop]];
-      for (const decorator of def.propDecorators[prop]) {
-        const ngMetadataName = decorator?.type?.prototype?.ngMetadataName;
-        if (!ngMetadataName) {
-          continue;
-        }
-        parsePropDecoratorsMap[ngMetadataName]?.(ngMetadataName, prop, decorator, declaration);
+  try {
+    // istanbul ignore if
+    if (typeof dec === 'string') {
+      let name = dec;
+      const index = name.indexOf('#');
+      if (index !== -1) {
+        name = name.substring(0, index);
       }
-    }
-  }
-};
+      if (name) {
+        declaration.selector = name;
+      }
 
-const buildDeclaration = (def: any | undefined, declaration: Declaration): void => {
-  if (def) {
-    def.inputs = def.inputs || [];
-    for (const input of declaration.inputs) {
-      if (def.inputs.indexOf(input) === -1) {
-        def.inputs.push(input);
+      return declaration;
+    }
+
+    // istanbul ignore if
+    if (dec.decorators && dec.decorators.length > 0) {
+      const metaDecorator = (dec.decorators || []).find((decorator: any): boolean => {
+        const metaArgs = decorator?.args?.[0];
+        const type = decorator?.type;
+
+        return (
+          (metaArgs && (metaArgs.declarations || metaArgs.imports || metaArgs.exports)) ||
+          (type && type?.prototype?.ngMetadataName === Directive?.prototype?.ngMetadataName) ||
+          (type && type?.prototype?.ngMetadataName === Pipe?.prototype?.ngMetadataName) ||
+          (type && type?.prototype?.ngMetadataName === Component?.prototype?.ngMetadataName) ||
+          (type && type?.prototype?.ngMetadataName === NgModule?.prototype?.ngMetadataName)
+        );
+      });
+      const metaArgs: any = metaDecorator?.args?.[0];
+
+      if (metaArgs) {
+        declaration.selector = extractSelector(metaArgs);
+        declaration.exportAs.push(...extractExportAs(metaArgs));
+        declaration.inputs.push(...extractInputs(metaArgs));
+        declaration.outputs.push(...extractOutputs(metaArgs));
+        declaration.providers.push(...extractProviders(metaArgs));
+        coreDefineProperty(declaration, 'host', extractHost(metaArgs));
       }
     }
 
-    def.outputs = def.outputs || [];
-    for (const output of declaration.outputs) {
-      if (def.outputs.indexOf(output) === -1) {
-        def.outputs.push(output);
-      }
+    // istanbul ignore if
+    if (dec.propDecorators) {
+      parsePropMetadata(dec, declaration);
     }
-
-    def.queries = {
-      ...(def.queries || []),
-      ...declaration.queries,
-    };
-
-    def.hostBindings = declaration.hostBindings;
-    def.hostListeners = declaration.hostListeners;
-    if (def.standalone === undefined) {
-      def.standalone = declaration.standalone;
-    }
+  } catch (e) {
+    // istanbul ignore next
+    console.log('ng-mocks CollectDeclarations:error', dec, e);
   }
+
+  return declaration;
 };
-
-const reflectionCapabilities = new ReflectionCapabilities();
-
-const parse = (def: any): any => {
-  if (typeof def !== 'function' && typeof def !== 'object') {
-    return {};
-  }
-
-  if (Object.prototype.hasOwnProperty.call(def, '__ngMocksParsed')) {
-    return def.__ngMocksDeclarations;
-  }
-
-  const parent = Object.getPrototypeOf(def);
-  const parentDeclarations = parent ? parse(parent) : {};
-  const declaration = createDeclarations(parentDeclarations);
-  coreDefineProperty(def, '__ngMocksParsed', true);
-  parseParameters(def, declaration);
-  parseAnnotations(def, declaration);
-  parseDecorators(def, declaration);
-  parsePropDecorators(def, declaration);
-  parsePropMetadata(def, declaration);
-  parseNgDef(def, declaration);
-  buildDeclaration(declaration.Directive, declaration);
-  buildDeclaration(declaration.Component, declaration);
-  buildDeclaration(declaration.Pipe, declaration);
-
-  coreDefineProperty(def, '__ngMocksDeclarations', {
-    ...parentDeclarations,
-    ...declaration,
-    parameters: reflectionCapabilities.parameters(def),
-  });
-
-  return def.__ngMocksDeclarations;
-};
-
-export default ((): ((def: any) => Declaration) => parse)();

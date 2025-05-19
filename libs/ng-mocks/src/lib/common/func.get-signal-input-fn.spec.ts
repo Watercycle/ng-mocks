@@ -5,35 +5,33 @@ describe('getSignalInputFn', () => {
 
   beforeEach(() => {
     // Store the original globalThis
-    originalGlobalThis = global.globalThis;
+    originalGlobalThis = window;
   });
 
   afterEach(() => {
     // Restore the original globalThis
-    global.globalThis = originalGlobalThis;
+    window = originalGlobalThis;
   });
 
   it('should return input function if available', () => {
-    const mockInput = () => {};
-    global.globalThis = {
-      ng: {
-        input: mockInput
-      }
-    };
+    const mockInput = jasmine.createSpy('mockInput');
+    // Use property assignment instead of direct replacement
+    const mockNg = { input: mockInput };
+    (window as any).ng = mockNg;
     
     expect(getSignalInputFn()).toBe(mockInput);
   });
 
   it('should return undefined if input function is not available', () => {
-    global.globalThis = {
-      ng: {}
-    };
+    // Create ng without input
+    (window as any).ng = {};
     
     expect(getSignalInputFn()).toBeUndefined();
   });
 
   it('should return undefined if ng object is not available', () => {
-    global.globalThis = {};
+    // Remove ng from global
+    delete (window as any).ng;
     
     expect(getSignalInputFn()).toBeUndefined();
   });
